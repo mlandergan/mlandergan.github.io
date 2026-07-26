@@ -1,0 +1,49 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* Palette + type tokens lifted from dfdxlabs.com's own stylesheet: a warm
+   "paper and ink" theme (cream background, brown-black ink text, rust-orange
+   links) instead of the usual black/white/blue tech-blog default. */
+@theme {
+	--font-heading: "Geist", ui-sans-serif, system-ui, sans-serif;
+	--font-body: "Source Serif 4", ui-serif, Georgia, Cambria, serif;
+
+	--color-paper-bg: #f5f1eb;
+	--color-paper-divider: #e0d9cf;
+	--color-ink: #3b2f24;
+	--color-ink-light: #6b5d50;
+	--color-ink-muted: #9a8b7a;
+	--color-link: #9a3412;
+	--color-link-hover: #7c2d12;
+}
+
+body {
+	background-color: var(--color-paper-bg);
+	color: var(--color-ink);
+	font-family: var(--font-body);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+nav {
+	font-family: var(--font-heading);
+}
+
+a {
+	color: var(--color-link);
+	text-decoration: none;
+}
+
+a:hover {
+	color: var(--color-link-hover);
+	text-decoration: underline;
+}
+
+::selection {
+	background-color: var(--color-link);
+	color: var(--color-paper-bg);
+}

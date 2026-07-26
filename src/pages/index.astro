@@ -1,17 +1,78 @@
 ---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
 
+const posts = (await getCollection('blog', ({ data }) => !data.draft)).sort(
+	(a, b) => b.data.date.valueOf() - a.data.date.valueOf(),
+);
 ---
 
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="icon" href="/favicon.ico" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
-	</head>
-	<body>
-		<h1>Astro</h1>
-	</body>
-</html>
+<BaseLayout title="Mark Landergan">
+	<section class="max-w-[100ch]">
+		<div class="flex flex-col-reverse gap-6 sm:flex-row sm:items-start sm:gap-8">
+			<div>
+				<h1 class="font-heading text-3xl font-semibold text-ink sm:text-4xl">Mark Landergan</h1>
+				<p class="mt-4 text-lg leading-relaxed text-ink-light">
+					I'm a Senior Robotics Software Engineer at Amazon Lab126, where I work on reinforcement
+					learning for humanoid locomotion — most recently vision-based stair climbing and
+					curriculum-trained walking policies for the Unitree G1. Before that I spent several
+					years at Omron Robotics and Bossa Nova Robotics building fleet-scale navigation,
+					collision avoidance, and localization systems for mobile robots running at real scale.
+					I studied Robotics Engineering at WPI.
+				</p>
+				<p class="mt-4 text-lg leading-relaxed text-ink-light">
+					This is where I write up side projects and deeper dives — right now, mostly RL for
+					whole-body humanoid control.
+				</p>
+			</div>
+			<img
+				src="/images/home/headshot.jpg"
+				alt="Mark Landergan"
+				width="160"
+				height="213"
+				class="w-32 shrink-0 rounded-lg border border-paper-divider object-cover sm:w-40"
+			/>
+		</div>
+	</section>
+
+	<section class="mt-12 max-w-[100ch]">
+		<figure>
+			<img
+				src="/images/home/bossa_nova_robotics_photo.jpg"
+				alt="Mark Landergan (right) with a colleague and a Bossa Nova Robotics inventory robot in the workshop"
+				class="w-full rounded-lg border border-paper-divider object-cover"
+			/>
+			<figcaption class="mt-2 text-sm text-ink-muted">
+				At Bossa Nova Robotics, working on the fleet that scaled to 550+ robots in Walmart stores.
+			</figcaption>
+		</figure>
+	</section>
+
+	<section class="mt-12 max-w-[100ch]">
+		<h2 class="font-heading text-sm font-semibold uppercase tracking-wide text-ink-muted">
+			Writing
+		</h2>
+		<ul class="mt-4 divide-y divide-paper-divider">
+			{
+				posts.map((post) => (
+					<li class="py-4 first:pt-0">
+						<a href={`/blog/${post.id}/`} class="group block no-underline">
+							<h3 class="font-heading text-lg font-medium text-ink group-hover:text-link">
+								{post.data.title}
+							</h3>
+							<p class="mt-1 text-sm text-ink-light">{post.data.description}</p>
+							<time datetime={post.data.date.toISOString()} class="mt-1 block text-xs text-ink-muted">
+								{post.data.date.toLocaleDateString('en-US', {
+									year: 'numeric',
+									month: 'long',
+									day: 'numeric',
+								})}
+							</time>
+						</a>
+					</li>
+				))
+			}
+		</ul>
+		{posts.length === 0 && <p class="text-ink-muted">No posts yet.</p>}
+	</section>
+</BaseLayout>

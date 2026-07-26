@@ -1,0 +1,36 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+const posts = (await getCollection('blog', ({ data }) => !data.draft)).sort(
+	(a, b) => b.data.date.valueOf() - a.data.date.valueOf(),
+);
+---
+
+<BaseLayout title="Writing — Mark Landergan">
+	<section class="max-w-[100ch]">
+		<h1 class="font-heading text-3xl font-semibold text-ink sm:text-4xl">Writing</h1>
+		<ul class="mt-8 divide-y divide-paper-divider">
+			{
+				posts.map((post) => (
+					<li class="py-4 first:pt-0">
+						<a href={`/blog/${post.id}/`} class="group block no-underline">
+							<h2 class="font-heading text-lg font-medium text-ink group-hover:text-link">
+								{post.data.title}
+							</h2>
+							<p class="mt-1 text-sm text-ink-light">{post.data.description}</p>
+							<time datetime={post.data.date.toISOString()} class="mt-1 block text-xs text-ink-muted">
+								{post.data.date.toLocaleDateString('en-US', {
+									year: 'numeric',
+									month: 'long',
+									day: 'numeric',
+								})}
+							</time>
+						</a>
+					</li>
+				))
+			}
+		</ul>
+		{posts.length === 0 && <p class="text-ink-muted">No posts yet.</p>}
+	</section>
+</BaseLayout>

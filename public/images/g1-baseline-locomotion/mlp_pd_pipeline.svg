@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 900" font-family="'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="760" height="900" fill="#ffffff"/>
+  <text x="380" y="34" text-anchor="middle" font-size="20" font-weight="700" fill="#1e293b">From network output to torque: the MLP → PD pipeline</text>
+
+  <!-- obs_t -->
+  <rect x="90" y="56" width="580" height="56" rx="10" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="380" y="90" text-anchor="middle" font-size="14.5" fill="#1e293b">obs_t: base vel/ang-vel, gravity dir, velocity command, joint pos/vel, last action</text>
+
+  <line x1="380" y1="112" x2="380" y2="142" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow2)"/>
+
+  <!-- Actor MLP -->
+  <rect x="230" y="144" width="300" height="70" rx="10" fill="#c7d2fe" stroke="#4338ca" stroke-width="1.5"/>
+  <text x="380" y="172" text-anchor="middle" font-size="16" font-weight="700" fill="#312e81">Actor MLP</text>
+  <text x="380" y="194" text-anchor="middle" font-size="13.5" fill="#312e81">256 → 128 → 128, ELU  (this is what deploys)</text>
+
+  <line x1="380" y1="214" x2="380" y2="244" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow2)"/>
+  <text x="400" y="234" font-size="12.5" fill="#64748b">one scalar per joint</text>
+
+  <!-- joint position target -->
+  <rect x="130" y="246" width="500" height="56" rx="10" fill="#eef2ff" stroke="#6366f1" stroke-width="1.5"/>
+  <text x="380" y="272" text-anchor="middle" font-size="14.5" fill="#1e293b">joint position target q_target_j</text>
+  <text x="380" y="291" text-anchor="middle" font-size="12.5" fill="#4f46e5">(offset from default pose, per joint j)</text>
+
+  <line x1="380" y1="302" x2="380" y2="332" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow2)"/>
+
+  <!-- repeated per joint banner -->
+  <rect x="60" y="334" width="640" height="34" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="5,4"/>
+  <text x="380" y="356" text-anchor="middle" font-size="13" font-style="italic" fill="#64748b">repeated independently for every actuated joint (all 20+ DoF)</text>
+
+  <line x1="380" y1="368" x2="380" y2="398" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow2)"/>
+
+  <!-- PD controller box -->
+  <rect x="90" y="400" width="580" height="130" rx="12" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.5"/>
+  <text x="380" y="428" text-anchor="middle" font-size="15.5" font-weight="700" fill="#713f12">per-joint PD controller</text>
+  <text x="380" y="450" text-anchor="middle" font-size="12.5" fill="#854d0e">(runs inside PhysX during training — and on the real robot's motor driver)</text>
+  <rect x="180" y="466" width="400" height="48" rx="8" fill="#ffffff" stroke="#ca8a04" stroke-width="1"/>
+  <text x="380" y="497" text-anchor="middle" font-size="17" fill="#713f12">τ_j = Kp_j · (q_target_j − q_j) − Kd_j · q̇_j</text>
+
+  <line x1="380" y1="530" x2="380" y2="560" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow2)"/>
+
+  <!-- torque applied -->
+  <rect x="200" y="562" width="360" height="52" rx="10" fill="#fff7ed" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="380" y="594" text-anchor="middle" font-size="14.5" fill="#1e293b">torque τ_j applied at joint j</text>
+
+  <line x1="380" y1="614" x2="380" y2="644" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow2)"/>
+
+  <!-- physics step -->
+  <rect x="150" y="646" width="460" height="52" rx="10" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="380" y="678" text-anchor="middle" font-size="14.5" fill="#1e293b">physics step (PhysX)</text>
+
+  <line x1="380" y1="698" x2="380" y2="728" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow2)"/>
+
+  <!-- next obs -->
+  <rect x="150" y="730" width="460" height="52" rx="10" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="380" y="762" text-anchor="middle" font-size="14.5" fill="#1e293b">next obs_(t+1)</text>
+
+  <!-- loop back arrow to actor MLP -->
+  <path d="M 610 756 C 720 756, 720 179, 534 179" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow2)"/>
+  <text x="700" y="470" font-size="13" fill="#64748b" text-anchor="middle" transform="rotate(90 700 470)">loop, one control step</text>
+
+  <!-- callout -->
+  <rect x="60" y="800" width="640" height="86" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="380" y="826" text-anchor="middle" font-size="13.5" fill="#1e293b">Position targets, not raw torques, so the policy never has to learn</text>
+  <text x="380" y="846" text-anchor="middle" font-size="13.5" fill="#1e293b">low-level torque-tracking dynamics. Kp/Kd are tuned per joint to match</text>
+  <text x="380" y="866" text-anchor="middle" font-size="13.5" fill="#1e293b">the real actuators — this is also the interface the real G1 expects.</text>
+</svg>
