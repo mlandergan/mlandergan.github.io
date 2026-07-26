@@ -6,7 +6,7 @@ draft: false
 ---
 
 *Post 1 of a series on reinforcement-learning-based whole-body control for the Unitree G1. Code:
-[link to this repo]. This post is scoped to the baseline walking policy; motion priors,
+placeholder. This post is scoped to the baseline walking policy; motion priors,
 curriculum terrain, and manipulation are covered in later posts.*
 
 The published literature on RL for humanoid whole-body control moves fast and assumes a lot:
@@ -131,10 +131,24 @@ pitch), knee, and ankle (pitch, roll) down each leg, plus the hand actuators. Th
 this repo's code actually uses come from Isaac Lab's `G1_MINIMAL_CFG` asset — e.g. `hip_yaw_joint`,
 `knee_joint`, `ankle_pitch_joint`.[^1]
 
+**A quick aside: what's actually defining this robot?** Every colored axis triad in that render,
+and every joint name this post references, traces back to a URDF (Unified Robot Description
+Format) — an XML format, originally from ROS, that describes a robot as a tree of rigid-body
+links connected by joints. Each joint entry in a URDF specifies its type (revolute, prismatic,
+fixed, ...), its axis of rotation, its position and orientation relative to the parent link, and
+its motion limits — exactly what those axis triads are visualizing, one per joint. Isaac
+Sim/Isaac Lab don't read URDF at runtime; they import it once and convert it to USD, NVIDIA's own
+scene-description format, via Isaac Sim's URDF importer. But the URDF (or the vendor's equivalent
+CAD export) is still the original source of truth for the kinematic tree, and it's usually the
+first thing worth opening when a joint name, limit, or default pose looks wrong. Unitree publishes
+the G1's own URDF (and an MJCF variant for MuJoCo) alongside its SDKs:
+[unitree_ros/robots/g1_description](https://github.com/unitreerobotics/unitree_ros/tree/master/robots/g1_description).
+
 ## What changed in the environment and reward
 
-Isaac Lab already ships a mature G1 flat-ground velocity task (`Isaac-Velocity-Flat-G1-v0`) with
-~15 reward terms, tuned by people who iterated on this for a while. Copying it verbatim would
+Isaac Lab already ships a mature G1 flat-ground velocity task
+([`Isaac-Velocity-Flat-G1-v0`](https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab_tasks/isaaclab_tasks/manager_based/locomotion/velocity/config/g1/flat_env_cfg.py))
+with ~15 reward terms, tuned by people who iterated on this for a while. Copying it verbatim would
 teach you nothing about *why* each term exists — so instead, we rebuild it from a small starting
 point and let the *failures* motivate each addition.
 
@@ -151,6 +165,61 @@ penalty (`lin_vel_z_l2`, -0.2), a small roll/pitch angular-velocity penalty (`an
 expensive even in the "minimal" config. Run `reward_debug.py --list-tags` after training and
 expect 11 active terms, not 6.
 
+Here's what one of those terms actually looks like in Isaac Lab's source — the core task reward,
+`track_lin_vel_xy_exp`, straight from the `G1Rewards` class in `rough_env_cfg.py`:
+
+```python
+from isaaclab.managers import RewardTermCfg as RewTerm
+import isaaclab_tasks.manager_based.locomotion.velocity.mdp as mdp
+
+track_lin_vel_xy_exp = RewTerm(
+    func=mdp.track_lin_vel_xy_yaw_frame_exp,
+    weight=1.0,
+    params={"command_name": "base_velocity", "std": 0.5},
+)
+```
+
+A `RewTerm` is a wrapper: a function reference, a `weight` that scales its output into the
+total reward sum, and a `params` dict passed to that function as keyword arguments. The
+computation lives in the function itself — `track_lin_vel_xy_yaw_frame_exp`, in
+`mdp/rewards.py`:
+
+```python
+def track_lin_vel_xy_yaw_frame_exp(
+    env, std: float, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Reward tracking of linear velocity commands (xy axes) in the gravity aligned
+    robot frame using an exponential kernel.
+    """
+    # extract the used quantities (to enable type-hinting)
+    asset = env.scene[asset_cfg.name]
+    vel_yaw = quat_apply_inverse(yaw_quat(asset.data.root_quat_w), asset.data.root_lin_vel_w[:, :3])
+    lin_vel_error = torch.sum(
+        torch.square(env.command_manager.get_command(command_name)[:, :2] - vel_yaw[:, :2]), dim=1
+    )
+    return torch.exp(-lin_vel_error / std**2)
+```
+
+A walkthrough: `asset.data.root_lin_vel_w` is the robot's base linear velocity in the
+*world* frame, from the physics sim; `quat_apply_inverse(yaw_quat(...), ...)` rotates
+that into the robot's *yaw* frame instead, so "forward" always means forward-relative-to-the-robot
+regardless of which way it's currently facing in the world — that's the "yaw_frame" in the
+function's name.
+
+`lin_vel_error` is then the commanded-vs-actual squared error, summed over the x/y components
+(`torch.sum(torch.square(...), dim=1)`) — one scalar error per environment, since this whole
+function runs vectorized across every parallel env at once (`env` here is the whole batched
+simulation, not a single robot instance).
+
+The last line is the exponential kernel: `torch.exp(-lin_vel_error / std**2)` maps zero error to a
+reward of exactly 1.0 and decays toward 0 as error grows, with `std` controlling how quickly —
+that's what `std=0.5` in the `RewTerm` above parameterizes.
+
+Every `*_exp` term in this reward (`track_ang_vel_z_exp` included) follows this same
+read-sim-state → compute-error → exponential-kernel shape; every other reward *name* in this post
+follows the same `RewTerm(func=..., weight=..., params=...)` wrapper shape. `flat_env_cfg.py`'s
+job (shown further down) is re-weighting these, not redefining them.
+
 **Train it — here's what goes wrong.** Run this first (`TASK=Isaac-Velocity-Flat-G1-Baseline-Minimal-v0 ./scripts/train_walk.sh`) and
 watch the rollout videos once it converges on the tracking task. Expect a policy that walks — the
 six terms above are enough to produce forward locomotion that tracks the velocity command — but
@@ -166,7 +235,7 @@ with specific, predictable rough edges, each traceable to a term that *isn't* in
 | Occasional stiff, jarring ankle motion at range limits | nothing discourages hitting ankle joint limits | `dof_pos_limits` |
 
 The minimal reward isn't wrong — it optimizes exactly what it's given. A stable gait and a
-natural-looking one are different optimization targets, and closing that gap here just takes a
+natural-looking one are different optimization targets, and closing that gap here takes a
 handful of boring regularization terms, not new algorithms.
 
 **Adding the terms back.** Add these six terms back in, and you've essentially reconstructed Isaac Lab's stock
@@ -182,7 +251,7 @@ handful of boring regularization terms, not new algorithms.
 | `dof_pos_limits` | -1.0 | ankle pitch/roll only |
 
 That's already implemented and registered as `Isaac-Velocity-Flat-G1-v0`, so there's nothing new
-to write; just run it. Here's that reconstruction as Isaac Lab actually wrote it —
+to write; run it. Here's that reconstruction as Isaac Lab actually wrote it —
 `config/g1/flat_env_cfg.py` in full:
 
 ```python
@@ -247,16 +316,24 @@ regular step cadence, and no ankle-limit slamming, relative to the minimal run.
 
 ## Setting up the cloud GPU: create, connect, train, visualize
 
-### Why a Spot T4
+### Why a T4
 
 Isaac Sim's own docs list `n1-standard-8` + one `nvidia-tesla-t4` as the documented minimum spec
 for running Isaac Sim on Google Cloud — it's the cheapest GPU shape NVIDIA explicitly supports
-for it. Add GCP's **Spot** provisioning (a steep discount off on-demand, in exchange for the VM
-being preemptible) on top of that. Training checkpoints every 50 iterations, so a Spot preemption
-costs at most a few minutes of progress if you resume from the last checkpoint afterward. GPU and
-vCPU pricing changes over time and by region — check current numbers yourself with the
+for it. The command below provisions it as a **standard, on-demand VM**, so it stays up for the
+whole run without GCP taking it back from you. GPU and vCPU pricing changes over time and by
+region — check current numbers yourself with the
 [GCP pricing calculator](https://cloud.google.com/products/calculator) before committing to a long
 run.
+
+**Trying to save on cost?** Add `--provisioning-model=SPOT --instance-termination-action=STOP` to
+the command below for a steep discount off on-demand pricing. The tradeoff: a Spot VM **can be
+stopped by GCP at any time** it needs the capacity back, with little to no warning —
+`--instance-termination-action=STOP` at least means a preemption stops the VM (keeping its disk)
+rather than deleting it, so `gcloud compute instances start g1-baseline-t4 --zone=us-central1-a`
+brings it back and you resume from the last checkpoint. Training checkpoints every 50 iterations,
+so a preemption costs at most a few minutes of progress. If you'd rather not think about any of
+that, skip Spot and run the standard command as written.
 
 ### 1. Create the VM
 
@@ -271,18 +348,17 @@ gcloud compute instances create g1-baseline-t4 \
   --boot-disk-size=100 \
   --boot-disk-type=pd-ssd \
   --maintenance-policy=TERMINATE \
-  --provisioning-model=SPOT \
-  --instance-termination-action=STOP \
   --metadata="install-nvidia-driver=True"
 ```
 
-`--instance-termination-action=STOP` means a Spot preemption stops the VM (keeping its disk)
-instead of deleting it — restart it with `gcloud compute instances start g1-baseline-t4
---zone=us-central1-a` and resume from the last checkpoint.
+`--maintenance-policy=TERMINATE` is required for any GPU-attached VM on GCP — live migration isn't
+supported with a GPU attached, so this means a host maintenance event stops and restarts the
+VM automatically rather than migrating it live. It's unrelated to the Spot tradeoff above; this
+standard VM keeps running normally otherwise.
 
 (`scripts/gcp_create_vm.sh` wraps this command; `PROJECT_ID`, `ZONE`, `INSTANCE_NAME`,
 `MACHINE_TYPE`, `ACCELERATOR`, and `BOOT_DISK_SIZE_GB` are all overridable via environment
-variables.)
+variables, and `SPOT=true` adds the two Spot flags above.)
 
 ### 2. Connect
 

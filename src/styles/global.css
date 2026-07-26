@@ -47,3 +47,11 @@ a:hover {
 	background-color: var(--color-link);
 	color: var(--color-paper-bg);
 }
+
+/* `prose-code:text-ink` targets every <code>, including ones nested inside a link -- an
+   element's own explicit color always wins over an inherited one, so without this a code span
+   inside a link silently loses the link color/hover state. Force it to inherit instead. */
+.prose a code {
+	color: inherit;
+}
+
