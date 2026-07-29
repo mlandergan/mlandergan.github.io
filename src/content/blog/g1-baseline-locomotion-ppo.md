@@ -6,8 +6,9 @@ draft: false
 ---
 
 *Post 1 of a series on reinforcement-learning-based whole-body control for the Unitree G1. Code:
-placeholder. This post is scoped to the baseline walking policy; motion priors,
-curriculum terrain, and manipulation are covered in later posts.*
+[github.com/mlandergan/rl-wbc-g1-baseline](https://github.com/mlandergan/rl-wbc-g1-baseline). This
+post is scoped to the baseline walking policy; motion priors, curriculum terrain, and manipulation
+are covered in later posts.*
 
 The published literature on RL for humanoid whole-body control moves fast and assumes a lot:
 dense trajectory-optimization notation, familiarity with a half-dozen papers' worth of reward and
@@ -83,7 +84,7 @@ stable, even though the actor is still stuck doing the hard part — acting well
 partial, real-world-realistic observations. This pattern is usually called **asymmetric
 actor-critic**.
 
-<p align="center"><img src="/images/g1-baseline-locomotion/actor_critic.svg" width="640" alt="Actor observes only onboard-realistic, noisy signals and is what gets deployed; critic additionally sees privileged sim-only state and is discarded after training"></p>
+<p align="center"><img src="/images/g1-baseline-locomotion/actor_critic.svg" width="850" alt="Actor observes only onboard-realistic, noisy signals and is what gets deployed; critic additionally sees privileged sim-only state and is discarded after training"></p>
 
 *What the actor sees (onboard-realistic, noisy) versus what the critic is additionally allowed to
 see (privileged simulator state) — only the actor's weights survive to deployment.*
@@ -104,7 +105,7 @@ interpreted as a position offset from that joint's default pose. Those position 
 handed to an independent PD (proportional-derivative) controller *per joint*, running inside
 PhysX at a much tighter loop rate than the policy itself:
 
-<p align="center"><img src="/images/g1-baseline-locomotion/mlp_pd_pipeline.svg" width="460" alt="From network output to torque: the MLP feeds per-joint position targets into independent PD controllers, which produce torques applied in the physics step"></p>
+<p align="center"><img src="/images/g1-baseline-locomotion/mlp_pd_pipeline.svg" width="620" alt="From network output to torque: the MLP feeds per-joint position targets into independent PD controllers, which produce torques applied in the physics step"></p>
 
 *Actor MLP → per-joint position target → per-joint PD controller → torque → physics step, looped
 once per control step.*
@@ -137,7 +138,7 @@ Format) — an XML format, originally from ROS, that describes a robot as a tree
 links connected by joints. Each joint entry in a URDF specifies its type (revolute, prismatic,
 fixed, ...), its axis of rotation, its position and orientation relative to the parent link, and
 its motion limits — exactly what those axis triads are visualizing, one per joint. Isaac
-Sim/Isaac Lab don't read URDF at runtime; they import it once and convert it to USD, NVIDIA's own
+Sim/Isaac Lab doesn't read URDF at runtime; they import it once and convert it to USD, NVIDIA's own
 scene-description format, via Isaac Sim's URDF importer. But the URDF (or the vendor's equivalent
 CAD export) is still the original source of truth for the kinematic tree, and it's usually the
 first thing worth opening when a joint name, limit, or default pose looks wrong. Unitree publishes
@@ -152,18 +153,35 @@ with ~15 reward terms, tuned by people who iterated on this for a while. Copying
 teach you nothing about *why* each term exists — so instead, we rebuild it from a small starting
 point and let the *failures* motivate each addition.
 
-**The reward we start with.** `Isaac-Velocity-Flat-G1-Baseline-Minimal-v0` (this repo's
-`flat_env_cfg.py`) subclasses stock G1 and strips it down to six pedagogical terms: velocity
-tracking (`track_lin_vel_xy_exp`, `track_ang_vel_z_exp` — the actual task), upright posture
-(`flat_orientation_l2`, penalizing the torso tilting off vertical), base height (`base_height_l2`,
-*added* — stock G1 has no such term[^2]), energy/torque penalty (`dof_torques_l2`) and joint
-regularization (`dof_acc_l2`, `action_rate_l2` — discouraging jerky, high-torque solutions PPO
-will happily find), and a foot slip penalty (`feet_slide`). Three more terms come along by
-inheritance and stay active without being part of that pedagogical set: a small vertical-velocity
-penalty (`lin_vel_z_l2`, -0.2), a small roll/pitch angular-velocity penalty (`ang_vel_xy_l2`,
--0.05), and a -200 penalty on episode termination (`termination_penalty`) — falling is still
-expensive even in the "minimal" config. Run `reward_debug.py --list-tags` after training and
-expect 11 active terms, not 6.
+**The reward we start with.** `Isaac-Velocity-Flat-G1-Baseline-Minimal-v0` subclasses stock G1
+and strips it to six pedagogical terms. Here's the actual override, from this repo's
+`flat_env_cfg.py`:
+
+```python
+class G1FlatMinimalEnvCfg(G1FlatEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        # new: stock G1 has no base-height term at all[^2]
+        self.rewards.base_height_l2 = RewTerm(
+            func=mdp.base_height_l2, weight=-1.0,
+            params={"target_height": TARGET_BASE_HEIGHT_M,
+                    "asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
+        )
+
+        # removed for the minimal pass — kept: tracking, orientation,
+        # base height, torque/joint regularization, foot slip
+        self.rewards.feet_air_time = None
+        self.rewards.dof_pos_limits = None
+        self.rewards.joint_deviation_hip = None
+        self.rewards.joint_deviation_arms = None
+        self.rewards.joint_deviation_fingers = None
+        self.rewards.joint_deviation_torso = None
+```
+
+Three more terms (`lin_vel_z_l2`, `ang_vel_xy_l2`, `termination_penalty`) come along by
+inheritance and stay active without being part of the pedagogical six. Run
+`reward_debug.py --list-tags` after training and expect 11 active terms, not 6.
 
 Here's what one of those terms actually looks like in Isaac Lab's source — the core task reward,
 `track_lin_vel_xy_exp`, straight from the `G1Rewards` class in `rough_env_cfg.py`:
@@ -200,43 +218,28 @@ def track_lin_vel_xy_yaw_frame_exp(
     return torch.exp(-lin_vel_error / std**2)
 ```
 
-A walkthrough: `asset.data.root_lin_vel_w` is the robot's base linear velocity in the
-*world* frame, from the physics sim; `quat_apply_inverse(yaw_quat(...), ...)` rotates
-that into the robot's *yaw* frame instead, so "forward" always means forward-relative-to-the-robot
-regardless of which way it's currently facing in the world — that's the "yaw_frame" in the
-function's name.
+`quat_apply_inverse(yaw_quat(...), ...)` rotates the world-frame base velocity into the robot's
+yaw frame, so "forward" always means forward-relative-to-the-robot. `lin_vel_error` is the squared
+commanded-vs-actual error, summed over x/y and computed per-environment across the whole
+vectorized batch. `torch.exp(-lin_vel_error / std**2)` then maps zero error to reward 1.0, decaying
+toward 0 as error grows (`std=0.5` above sets the decay rate).
 
-`lin_vel_error` is then the commanded-vs-actual squared error, summed over the x/y components
-(`torch.sum(torch.square(...), dim=1)`) — one scalar error per environment, since this whole
-function runs vectorized across every parallel env at once (`env` here is the whole batched
-simulation, not a single robot instance).
+Every `*_exp` term follows this same shape; every reward follows the `RewTerm(func=..., weight=...,
+params=...)` wrapper. `flat_env_cfg.py` only reweights these, never redefines them.
 
-The last line is the exponential kernel: `torch.exp(-lin_vel_error / std**2)` maps zero error to a
-reward of exactly 1.0 and decays toward 0 as error grows, with `std` controlling how quickly —
-that's what `std=0.5` in the `RewTerm` above parameterizes.
+**Train it.** Run the following to start the baseline training:
 
-Every `*_exp` term in this reward (`track_ang_vel_z_exp` included) follows this same
-read-sim-state → compute-error → exponential-kernel shape; every other reward *name* in this post
-follows the same `RewTerm(func=..., weight=..., params=...)` wrapper shape. `flat_env_cfg.py`'s
-job (shown further down) is re-weighting these, not redefining them.
+```bash
+TASK=Isaac-Velocity-Flat-G1-Baseline-Minimal-v0 ./scripts/train_walk.sh
+```
 
-**Train it — here's what goes wrong.** Run this first (`TASK=Isaac-Velocity-Flat-G1-Baseline-Minimal-v0 ./scripts/train_walk.sh`) and
-watch the rollout videos once it converges on the tracking task. Expect a policy that walks — the
-six terms above are enough to produce forward locomotion that tracks the velocity command — but
-with specific, predictable rough edges, each traceable to a term that *isn't* in this reward yet:
-
-| What you'll see | Why | The term stock G1 uses to fix it |
-|---|---|---|
-| Arms swing wildly / flail | nothing penalizes arm joints drifting from a natural resting pose | `joint_deviation_arms` |
-| Fingers twitch or spasm | same issue, on the hand actuators | `joint_deviation_fingers` |
-| Torso/waist rotates oddly off-axis | nothing keeps the waist near its default yaw/roll/pitch | `joint_deviation_torso` |
-| Hips splay outward, duck-footed gait | hip yaw/roll are free to drift | `joint_deviation_hip` |
-| Irregular, shuffling gait; one leg barely leaves the ground | no shaping toward a swing/stance rhythm | `feet_air_time` |
-| Occasional stiff, jarring ankle motion at range limits | nothing discourages hitting ankle joint limits | `dof_pos_limits` |
-
-The minimal reward isn't wrong — it optimizes exactly what it's given. A stable gait and a
-natural-looking one are different optimization targets, and closing that gap here takes a
-handful of boring regularization terms, not new algorithms.
+Watch the rollout video once it converges. The six terms above are
+enough to produce forward locomotion that tracks the velocity command, but with rough edges —
+flailing arms, a duck-footed gait, jarring ankle motion at range limits — each traceable to a
+regularization term stock G1 has and this minimal reward doesn't (`joint_deviation_*`,
+`feet_air_time`, `dof_pos_limits`). A stable gait and a natural-looking one are different
+optimization targets; closing that gap takes a handful of boring regularization terms, not new
+algorithms.
 
 **Adding the terms back.** Add these six terms back in, and you've essentially reconstructed Isaac Lab's stock
 `G1FlatEnvCfg` from first principles:
@@ -319,12 +322,34 @@ regular step cadence, and no ankle-limit slamming, relative to the minimal run.
 ### Why a T4
 
 Isaac Sim's own docs list `n1-standard-8` + one `nvidia-tesla-t4` as the documented minimum spec
-for running Isaac Sim on Google Cloud — it's the cheapest GPU shape NVIDIA explicitly supports
-for it. The command below provisions it as a **standard, on-demand VM**, so it stays up for the
-whole run without GCP taking it back from you. GPU and vCPU pricing changes over time and by
-region — check current numbers yourself with the
+for running Isaac Sim on Google Cloud. We use it because it's what the docs specify — it's the
+cheapest GPU shape NVIDIA explicitly supports. The command below provisions it as a **standard,
+on-demand VM**, so it stays up for the whole run without GCP taking it back from you. GPU and vCPU
+pricing changes over time and by region — check current numbers yourself with the
 [GCP pricing calculator](https://cloud.google.com/products/calculator) before committing to a long
 run.
+
+> **INFO — first time using a GPU on this GCP project?** New projects (and new billing accounts)
+> start with a **GPU quota of 0**, so the `gcloud compute instances create` command below will fail
+> with a `Quota 'GPUS_ALL_REGIONS' exceeded` error until you request an increase — this is separate
+> from, and in addition to, having billing enabled. Request one before running the command:
+>
+> 1. Console: **IAM & Admin → Quotas** (or go directly to
+>    `https://console.cloud.google.com/iam-admin/quotas?project=<your-project-id>`).
+> 2. Filter for `gpus_all_regions`, select the **GPUS-ALL-REGIONS-per-project** row, click **Edit
+>    Quotas**, and request a small limit (e.g. `1` or `2`) — more than that is unlikely to be
+>    approved instantly.
+> 3. Give a one-line justification (what you're training, that it's a single GPU, non-commercial).
+>    Small requests are often auto-approved within minutes; occasionally it takes longer.
+> 4. **If it's denied** with a "new project, wait 48h" message, that's normal for brand-new billing
+>    accounts — wait and resubmit, or request via a Sales/Support contact if you need it sooner.
+>
+> Check your current quota from the terminal at any point with:
+>
+> ```bash
+> gcloud compute project-info describe --project=<your-project-id> --format="value(quotas)" \
+>   | tr ';' '\n' | grep -A1 GPUS_ALL_REGIONS
+> ```
 
 **Trying to save on cost?** Add `--provisioning-model=SPOT --instance-termination-action=STOP` to
 the command below for a steep discount off on-demand pricing. The tradeoff: a Spot VM **can be
@@ -377,8 +402,18 @@ gcloud compute ssh g1-baseline-t4 --zone=us-central1-a -- -L 6006:localhost:6006
 
 Clone this repo, install Docker + the NVIDIA Container Toolkit, and build the training image:
 
+> **INFO — NGC API key.** The `docker login nvcr.io` step below needs an NVIDIA NGC account and API
+> key — free, no cost, just a signup:
+>
+> 1. Create an account (or sign in) at [ngc.nvidia.com](https://ngc.nvidia.com).
+> 2. Go to **Setup → API Key** (some accounts show this as "Generate Personal Key" instead —
+>    functionally the same thing here).
+> 3. Click **Generate Key** and copy it immediately; NGC only shows it once.
+> 4. When `docker login nvcr.io` prompts you: username is the literal string `$oauthtoken`,
+>    password is the key you just generated.
+
 ```bash
-git clone <this repo> && cd RL_WBC_G1
+git clone https://github.com/mlandergan/rl-wbc-g1-baseline.git && cd rl-wbc-g1-baseline
 
 # Docker
 curl -fsSL https://get.docker.com | sudo sh
@@ -396,8 +431,6 @@ sudo systemctl restart docker
 
 nvidia-smi   # sanity check: driver sees the GPU
 
-# NGC login -- needs a free account + API key from https://ngc.nvidia.com
-# username is the literal string "$oauthtoken", password is your API key
 docker login nvcr.io
 
 docker build -f docker/Dockerfile -t rl-wbc-g1-baseline .
@@ -459,6 +492,11 @@ once after the minimal run, again after the stock run) doesn't nest into `./logs
 PROJECT_ID=<your-project-id> ./scripts/sync_results.sh
 ```
 
+> **DISCLAIMER: verify the sync actually completed and everything you want is really on
+> local disk — checkpoints, TensorBoard logs, and any exported videos — before running the
+> delete command below.** Deleting the VM also deletes its boot disk; anything not already
+> synced down is gone for good, with no recovery path.
+
 then delete the VM so it stops billing:
 
 ```bash
@@ -467,6 +505,68 @@ gcloud compute instances delete g1-baseline-t4 --zone=us-central1-a
 
 (`scripts/gcp_teardown_vm.sh` wraps the delete command above with a confirmation prompt, since
 deleting the VM is destructive.)
+
+## Results & Analysis
+
+Both runs below are 1500 iterations, `NUM_ENVS=4096`, on a single GCP L4 GPU — same PPO
+hyperparameters throughout, so the only variable is the reward. Wall-clock time was about 56
+minutes for the minimal-reward run and 64 minutes for the stock-reward run — the extra ~8 minutes
+is the cost of computing 9 additional reward terms every step across 4096 parallel environments.
+
+| Metric (final) | Minimal (6 terms) | Stock (15 terms) |
+|---|---:|---:|
+| Mean reward | ~27.65 | ~27.72 |
+| Episode length (cap 1000) | 1000 | 995 |
+| Fall rate (`base_contact`) | 0.10% | 0.39% |
+| Lin-vel tracking error | 0.261 | 0.225 |
+| Ang-vel tracking error | 0.485 | 0.462 |
+| Reward trough (early falling phase) | -8.7 @ iter 125 | -10.9 @ iter 128 |
+
+Reward and fall rate end up close — both rewards are enough to learn a stable, command-tracking
+gait. The gap is qualitative, not visible in these numbers: the stock reward's extra terms
+(`joint_deviation_*`, `feet_air_time`, `dof_pos_limits`) produce a visibly calmer, more natural
+gait in the rollout video, at the cost of a slightly rougher early-training trough (more terms to
+balance while the policy is still mostly falling).
+
+**Minimal-reward run** (`g1_flat_baseline_minimal`):
+
+| Early (iter 50) | Mid (iter 750) | Final (iter 1499) |
+|---|---|---|
+| <video src="/videos/g1-baseline-locomotion/minimal_early_iter50.mp4" width="400" controls loop muted></video> | <video src="/videos/g1-baseline-locomotion/minimal_mid_iter750.mp4" width="400" controls loop muted></video> | <video src="/videos/g1-baseline-locomotion/minimal_final_iter1499.mp4" width="400" controls loop muted></video> |
+
+Expect the rough edges described above — flailing arms, duck-footed hips, occasional stiff ankle
+motion — most visible in the mid/final videos once the walk itself is stable.
+
+**Stock-reward run** (`Isaac-Velocity-Flat-G1-v0`), same checkpoints for a direct comparison:
+
+| Early (iter 50) | Mid (iter 750) | Final (iter 1499) |
+|---|---|---|
+| <video src="/videos/g1-baseline-locomotion/stock_early_iter50.mp4" width="400" controls loop muted></video> | <video src="/videos/g1-baseline-locomotion/stock_mid_iter750.mp4" width="400" controls loop muted></video> | <video src="/videos/g1-baseline-locomotion/stock_final_iter1499.mp4" width="400" controls loop muted></video> |
+
+If you watch the final checkpoint videos between the baseline run and the full-reward run the
+qualitative gap is large. Run 1
+(minimal reward) walks and tracks velocity commands fine, but its left arm is pinned at a fixed,
+awkward angle and its right arm flails around throughout the whole rollout — nothing in the
+6-term reward tells it what a "normal" arm should be doing, so it doesn't bother. Run 2 (stock
+reward) tracks commands just as well, but both arms settle into a natural resting pose near the
+hips — that's the `joint_deviation_arms` term doing exactly what it's there for.
+
+Neither run required a from-scratch reward redesign to go from one to the other — it was a matter
+of adding back a handful of terms. I hope this small ablation helps build intuition for reward
+engineering as an iterative process: small, single-variable changes (tweak one weight, add one or
+two terms) are far easier to reason about and attribute cause and effect to than a full rewrite or
+a big batch of simultaneous changes. Not shown here, but a natural next step is a thin wrapper
+around `play.py` that commands a fixed sweep of velocities — forward, backward, left, right,
+strafe, at something like 0.3 / 0.5 / 0.7 / 1.0 m/s — and logs tracking error both in sim and on
+real hardware, turning "it looks better" into a quantified before/after number.
+
+Both curves follow the same shape — a trough while the policy is still mostly falling, then a
+climb to a plateau around iteration 1000 — tracking almost on top of each other despite the
+9-term gap in reward complexity. The stock run's trough is slightly deeper (more terms to balance
+early on), consistent with the table above.
+
+<p align="center"><img src="/images/g1-baseline-locomotion/comparison_base_vs_fullstock_mean_reward.png" width="800" alt="TensorBoard: Train/mean_reward, minimal vs. stock reward, overlaid"></p>
+<p align="center"><img src="/images/g1-baseline-locomotion/comparison_base_vs_full_std_action.png" width="800" alt="TensorBoard: Policy/mean_noise_std, minimal vs. stock reward, overlaid"></p>
 
 ## What to look for, and common failure modes
 
