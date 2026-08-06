@@ -1,7 +1,7 @@
 ---
 title: "Stylized Walking for the Unitree G1 with Adversarial Motion Priors"
 description: "Replacing hand-tuned style regularization with a learned motion prior: the AMP paper, where reference motion data actually comes from, and a velocity-tracking G1 policy trained with skrl."
-date: 2026-08-02
+date: 2026-08-06
 draft: false
 ---
 
