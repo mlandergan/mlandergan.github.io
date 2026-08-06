@@ -18,7 +18,12 @@ interface Props {
 
 const { title, description, date, updated, headings = [] } = Astro.props;
 
-const dateFormat: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric' };
+const dateFormat: Intl.DateTimeFormatOptions = {
+	year: 'numeric',
+	month: 'long',
+	day: 'numeric',
+	timeZone: 'UTC',
+};
 ---
 
 <BaseLayout title={`${title} — Mark Landergan`} description={description}>
