@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "katex/dist/katex.min.css";
 @plugin "@tailwindcss/typography";
 
 /* Palette + type tokens lifted from dfdxlabs.com's own stylesheet: a warm
